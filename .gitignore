@@ -13,6 +13,7 @@ __pycache__/
 # Local work — projects and downloaded jobs never belong in the repo
 *.mscript
 *.mscript.bak
+Projects/
 
 # PyInstaller build output
 build/

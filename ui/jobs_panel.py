@@ -28,7 +28,10 @@ from ui.scale_manager import scale_manager
 
 logger = logging.getLogger(__name__)
 
-WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), "MomoScriptJobs")
+# Job downloads live inside the app folder — same pattern in both editions:
+# <app root>\Projects\{Title}_{chapters}\ (images.zip, images/, mscripts).
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WORKSPACE_ROOT = os.path.join(_APP_ROOT, "Projects")
 POLL_MS = 30_000
 
 # Row backgrounds by job situation (light backgrounds -> dark text)

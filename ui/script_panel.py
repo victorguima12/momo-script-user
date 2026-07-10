@@ -828,12 +828,82 @@ class ImageStripWidget(QWidget):
             painter.setPen(QColor(255, 255, 255))
             painter.drawText(r, Qt.AlignCenter, "⇅")
 
+        # Character-capture rectangle (Story Bible photo grab)
+        cap_rect = getattr(self, "_capture_rect", None)
+        if cap_rect and not cap_rect.isNull():
+            painter.setPen(QPen(QColor(0, 230, 118), 2, Qt.DashLine))
+            painter.setBrush(QColor(0, 230, 118, 30))
+            painter.drawRect(cap_rect)
+
         painter.end()
+
+    # -- Character photo capture (Story Bible) ---
+
+    def start_capture(self, callback):
+        """One-shot capture mode: the cursor becomes a cross and the next
+        left-drag rectangle is cropped from the underlying image (BGR
+        ndarray) and passed to callback. Right-click (or a tiny drag)
+        cancels with callback(None)."""
+        self._capture_cb = callback
+        self._capture_origin = None
+        self._capture_rect = None
+        self.setCursor(Qt.CrossCursor)
+
+    def _finish_capture(self, rect):
+        cb = self._capture_cb
+        self._capture_cb = None
+        self._capture_origin = None
+        self._capture_rect = None
+        self.unsetCursor()
+        self.update()
+        crop = self._crop_display_rect(rect) if rect is not None else None
+        if cb:
+            cb(crop)
+
+    def _crop_display_rect(self, rect: QRect):
+        """Crop the display-space rect from the source image under its top
+        edge (clamped to that image), returning a BGR ndarray or None."""
+        info = self._display_to_image_coords(rect.topLeft())
+        if not info:
+            return None
+        g, x1, y1 = info
+        local = self._global_to_local(g)
+        if not (0 <= local < len(self.image_paths)):
+            return None
+        scale = self.scale_factors[local] if local < len(self.scale_factors) else 1.0
+        if scale <= 0:
+            return None
+        x2 = x1 + int(rect.width() / scale)
+        y2 = y1 + int(rect.height() / scale)
+        path = self.image_paths[local]
+        try:
+            data = np.fromfile(path, dtype=np.uint8)
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        except Exception:
+            logger.exception(f"capture: failed to read {path}")
+            return None
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        x1, x2 = max(0, min(x1, w - 1)), max(1, min(x2, w))
+        y1, y2 = max(0, min(y1, h - 1)), max(1, min(y2, h))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return img[y1:y2, x1:x2].copy()
 
     # -- Mouse interaction ---
 
     def mousePressEvent(self, event):
         pos = event.pos()
+
+        if getattr(self, "_capture_cb", None):
+            if event.button() == Qt.LeftButton:
+                self._capture_origin = self._clamp_to_content(pos)
+                self._capture_rect = QRect(self._capture_origin, QSize(0, 0))
+                self.update()
+            else:
+                self._finish_capture(None)  # right-click cancels
+            return
 
         if event.button() == Qt.RightButton:
             # Priority 1: delete box under cursor (existing behavior)
@@ -952,6 +1022,13 @@ class ImageStripWidget(QWidget):
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
+
+        if getattr(self, "_capture_cb", None):
+            if getattr(self, "_capture_origin", None) is not None:
+                self._capture_rect = QRect(
+                    self._capture_origin, self._clamp_to_content(pos)).normalized()
+                self.update()
+            return
 
         if self._drag_mode == "create" and self._drag_start:
             self._update_create_rect(pos)
@@ -1074,6 +1151,15 @@ class ImageStripWidget(QWidget):
         self._active_cross_seams = []
 
     def mouseReleaseEvent(self, event):
+        if getattr(self, "_capture_cb", None):
+            if (event.button() == Qt.LeftButton
+                    and getattr(self, "_capture_origin", None) is not None):
+                rect = QRect(self._capture_origin,
+                             self._clamp_to_content(event.pos())).normalized()
+                self._finish_capture(
+                    rect if rect.width() > 4 and rect.height() > 4 else None)
+            return
+
         if event.button() == Qt.LeftButton:
             if self._drag_mode == "create" and self._create_rect:
                 self._update_create_rect(event.pos())
@@ -3844,6 +3930,18 @@ class ScriptPanel(QWidget):
                 pix = _ref_pixmap(info_dict, name)
                 if pix is not None:
                     pic_item.setData(Qt.DecorationRole, pix)
+                    pic_item.setToolTip("Click to recapture from the page")
+                else:
+                    pic_item.setText("+")
+                    pic_item.setTextAlignment(Qt.AlignCenter)
+                    pic_item.setForeground(QColor("#00e676"))
+                    f = pic_item.font()
+                    f.setPointSize(18)
+                    f.setBold(True)
+                    pic_item.setFont(f)
+                    pic_item.setToolTip(
+                        "Click, then drag a rectangle over the character's "
+                        "face on the page to capture it")
                 table.setItem(row, 0, pic_item)
                 table.setItem(row, 1, QTableWidgetItem(str(name)))
                 table.setItem(row, 2, QTableWidgetItem(str(info_dict.get("description", ""))))
@@ -3872,7 +3970,17 @@ class ScriptPanel(QWidget):
             table.insertRow(row)
             for col in range(5):
                 table.setItem(row, col, QTableWidgetItem(""))
-            table.item(row, 0).setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            pic = table.item(row, 0)
+            pic.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            pic.setText("+")
+            pic.setTextAlignment(Qt.AlignCenter)
+            pic.setForeground(QColor("#00e676"))
+            f = pic.font()
+            f.setPointSize(18)
+            f.setBold(True)
+            pic.setFont(f)
+            pic.setToolTip("Click, then drag a rectangle over the "
+                           "character's face on the page to capture it")
             table.editItem(table.item(row, 1))
 
         def do_delete():
@@ -3880,6 +3988,58 @@ class ScriptPanel(QWidget):
             for r in rows:
                 table.removeRow(r)
 
+        def start_capture_for(row, col):
+            """Photo cell clicked: hide the dialog, let the user drag a
+            rectangle over the strip, crop it into char_refs/ and show it."""
+            if col != 0:
+                return
+            name_item = table.item(row, 1)
+            name = name_item.text().strip() if name_item else ""
+            if not name:
+                QMessageBox.information(
+                    dlg, "Name first",
+                    "Give the character a name before capturing a photo.")
+                return
+            dlg.hide()
+            self.status_label.setText(
+                f"Drag a rectangle over {name}'s face (right-click cancels)")
+
+            def on_captured(crop):
+                try:
+                    if crop is not None and crop.size:
+                        os.makedirs(refs_dir, exist_ok=True)
+                        import re as _re
+                        safe = _re.sub(r"[^\w\-]+", "_", name).strip("_") or "char"
+                        out = os.path.join(refs_dir, f"{safe}.png")
+                        ok, buf = cv2.imencode(".png", crop)
+                        if ok:
+                            buf.tofile(out)
+                            entry = characters.get(name)
+                            if isinstance(entry, str):
+                                entry = {"description": entry}
+                            if not isinstance(entry, dict):
+                                entry = {}
+                            entry["ref_image"] = f"char_refs/{safe}.png"
+                            characters[name] = entry
+                            pix = QPixmap(out)
+                            if not pix.isNull():
+                                item = table.item(row, 0)
+                                item.setText("")
+                                item.setData(Qt.DecorationRole, pix.scaled(
+                                    80, 76, Qt.KeepAspectRatio,
+                                    Qt.SmoothTransformation))
+                                item.setToolTip("Click to recapture from the page")
+                            self.status_label.setText(f"Photo captured for {name}")
+                    else:
+                        self.status_label.setText("Capture cancelled")
+                finally:
+                    dlg.show()
+                    dlg.raise_()
+                    dlg.activateWindow()
+
+            self.image_strip.start_capture(on_captured)
+
+        table.cellClicked.connect(start_capture_for)
         add_btn.clicked.connect(do_add)
         del_btn.clicked.connect(do_delete)
         cancel_btn.clicked.connect(dlg.reject)
