@@ -2063,7 +2063,7 @@ class TextSlotWidget(QFrame):
         esc = html.escape(original_text).replace("\n", "<br/>")
         self._diff_label.setText(
             f'<span style="font-family:\'{self._cur_family}\'; '
-            f'font-size:{small}px; color:#e57373;"><s>{esc}</s></span>')
+            f'font-size:{small}px; color:#e57373;">{esc}</span>')
 
     def clear_review_diff(self):
         self._review_green = False
