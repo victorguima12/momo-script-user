@@ -2044,12 +2044,13 @@ class TextSlotWidget(QFrame):
         self.zone_number = num
         self.zone_label.setText(f"Zone {num}")
 
-    def set_review_diff(self, original_text: str):
+    def set_review_diff(self, original_text: str, size: Optional[int] = None):
         """Mark this slot as writer-edited: current (delivered) text turns
         green, and the pre-edit original appears below it in smaller,
         struck-through red. The red text is display-only — it is NOT part
         of the slot text, so saving/delivering is unaffected."""
         self._review_green = True
+        self._review_original = original_text
         self._apply_text_style(self._cur_family, self._cur_size, self._font_color)
         if self._diff_label is None:
             self._diff_label = QLabel()
@@ -2058,7 +2059,7 @@ class TextSlotWidget(QFrame):
             self._diff_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._diff_label.setStyleSheet("background: transparent; padding: 2px 4px;")
             self.layout().addWidget(self._diff_label)
-        small = max(8, self._cur_size - 2)
+        small = size or max(8, self._cur_size - 2)
         esc = html.escape(original_text).replace("\n", "<br/>")
         self._diff_label.setText(
             f'<span style="font-family:\'{self._cur_family}\'; '
@@ -2129,7 +2130,7 @@ class TextSlotsPanel(QWidget):
 
         # Review-mode eye: toggles the red pre-edit originals under edited
         # zones. Only visible while review diffs are loaded (Load Delivery).
-        self.review_eye_btn = QPushButton("\U0001F441 Original")
+        self.review_eye_btn = QPushButton("\U0001F441")
         self.review_eye_btn.setCheckable(True)
         self.review_eye_btn.setChecked(True)
         self.review_eye_btn.setToolTip(
@@ -2140,6 +2141,16 @@ class TextSlotsPanel(QWidget):
         self.review_eye_btn.setVisible(False)
         self.review_eye_btn.toggled.connect(self._on_review_eye_toggled)
         font_bar.addWidget(self.review_eye_btn)
+
+        self.review_size_spin = QSpinBox()
+        self.review_size_spin.setRange(6, 48)
+        self.review_size_spin.setValue(10)
+        self.review_size_spin.setSuffix("px")
+        self.review_size_spin.setFixedWidth(scale_manager.scale(60))
+        self.review_size_spin.setToolTip("Size of the original text (red)")
+        self.review_size_spin.setVisible(False)
+        self.review_size_spin.valueChanged.connect(self._on_review_size_changed)
+        font_bar.addWidget(self.review_size_spin)
 
         font_bar.addStretch()
         outer.addLayout(font_bar)
@@ -2207,7 +2218,8 @@ class TextSlotsPanel(QWidget):
             self.slots[box.id] = slot
             self._layout.addWidget(slot)
             if box.id in self.review_diffs:
-                slot.set_review_diff(self.review_diffs[box.id])
+                slot.set_review_diff(self.review_diffs[box.id],
+                                     size=self.review_size_spin.value())
                 slot.set_diff_visible(self.review_eye_btn.isChecked())
 
         self._layout.addStretch()
@@ -2240,16 +2252,23 @@ class TextSlotsPanel(QWidget):
         self.review_diffs = dict(diffs)
         for bid, slot in self.slots.items():
             if bid in self.review_diffs:
-                slot.set_review_diff(self.review_diffs[bid])
+                slot.set_review_diff(self.review_diffs[bid],
+                                     size=self.review_size_spin.value())
                 slot.set_diff_visible(self.review_eye_btn.isChecked())
             else:
                 slot.clear_review_diff()
-        # The eye toggle only makes sense while reviewing a delivery.
+        # The eye + size controls only make sense while reviewing a delivery.
         self.review_eye_btn.setVisible(bool(self.review_diffs))
+        self.review_size_spin.setVisible(bool(self.review_diffs))
 
     def _on_review_eye_toggled(self, checked: bool):
         for slot in self.slots.values():
             slot.set_diff_visible(checked)
+
+    def _on_review_size_changed(self, size: int):
+        for bid, slot in self.slots.items():
+            if bid in self.review_diffs:
+                slot.set_review_diff(self.review_diffs[bid], size=size)
 
 
 # ---------------------------------------------------------------------------
