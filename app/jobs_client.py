@@ -241,11 +241,19 @@ def deliver_job(job_id: str, writer_name: str, state: dict,
             f"Job status is '{job.get('status')}' — nothing to deliver."
         )
 
+    # Versioned deliveries: each delivery becomes v1, v2, ... — the admin
+    # keeps the original ("Main") and every prior version intact. A legacy
+    # pre-versioning delivery (chunks at delivered_{i}) counts as v1.
+    prev = int(job.get("delivered_versions") or 0)
+    if prev == 0 and int(job.get("delivered_chunks") or 0) > 0:
+        prev = 1
+    version = prev + 1
+
     chunks = encode_mscript_chunks(state)
     for i, chunk in enumerate(chunks):
         resp = _request(
             "PATCH",
-            f"{FIRESTORE_BASE}/{JOBS_COLLECTION}/{job_id}/payload/delivered_{i}",
+            f"{FIRESTORE_BASE}/{JOBS_COLLECTION}/{job_id}/payload/delivered_v{version}_{i}",
             params=_key_params(),
             json={"fields": {"data": _to_fs(chunk)}},
         )
@@ -257,7 +265,10 @@ def deliver_job(job_id: str, writer_name: str, state: dict,
         job_id,
         {
             "status": "delivered",
-            "delivered_chunks": len(chunks),
+            "delivered_versions": version,
+            f"delivered_v{version}_chunks": len(chunks),
+            f"delivered_v{version}_by": writer_name,
+            f"delivered_v{version}_at": _now_iso(),
             "delivered_at": _now_iso(),
         },
         job["_update_time"],

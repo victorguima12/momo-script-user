@@ -4,6 +4,7 @@ YOLO detects panels in the image strip; each panel maps to a text slot.
 Manual box creation by click-drag; boxes are always sorted top-to-bottom.
 """
 
+import html
 import json
 import logging
 import os
@@ -1932,6 +1933,12 @@ class TextSlotWidget(QFrame):
         self.box_id = box_id
         self.zone_number = zone_number
         self._is_active = False
+        # Review mode (admin "Load Delivery"): green text + the pre-edit
+        # original shown struck-through in red below the editor.
+        self._review_green = False
+        self._diff_label: Optional[QLabel] = None
+        self._cur_family = font_family
+        self._cur_size = font_size
 
         self.setFrameShape(QFrame.StyledPanel)
         self.setObjectName("slotFrame")
@@ -1972,6 +1979,10 @@ class TextSlotWidget(QFrame):
 
     def _apply_text_style(self, family: str, size: int, color: str):
         self._font_color = color
+        self._cur_family = family
+        self._cur_size = size
+        if self._review_green:
+            color = "#66bb6a"
         self.text_edit.setStyleSheet(f"""
             QPlainTextEdit {{
                 background-color: #2a2a2a;
@@ -2033,6 +2044,33 @@ class TextSlotWidget(QFrame):
         self.zone_number = num
         self.zone_label.setText(f"Zone {num}")
 
+    def set_review_diff(self, original_text: str):
+        """Mark this slot as writer-edited: current (delivered) text turns
+        green, and the pre-edit original appears below it in smaller,
+        struck-through red. The red text is display-only — it is NOT part
+        of the slot text, so saving/delivering is unaffected."""
+        self._review_green = True
+        self._apply_text_style(self._cur_family, self._cur_size, self._font_color)
+        if self._diff_label is None:
+            self._diff_label = QLabel()
+            self._diff_label.setWordWrap(True)
+            self._diff_label.setTextFormat(Qt.RichText)
+            self._diff_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self._diff_label.setStyleSheet("background: transparent; padding: 2px 4px;")
+            self.layout().addWidget(self._diff_label)
+        small = max(8, self._cur_size - 2)
+        esc = html.escape(original_text).replace("\n", "<br/>")
+        self._diff_label.setText(
+            f'<span style="font-family:\'{self._cur_family}\'; '
+            f'font-size:{small}px; color:#e57373;"><s>{esc}</s></span>')
+
+    def clear_review_diff(self):
+        self._review_green = False
+        self._apply_text_style(self._cur_family, self._cur_size, self._font_color)
+        if self._diff_label is not None:
+            self._diff_label.deleteLater()
+            self._diff_label = None
+
 
 # ---------------------------------------------------------------------------
 # Text Slots Panel (right panel)
@@ -2049,6 +2087,9 @@ class TextSlotsPanel(QWidget):
         self._font_family = "Arial"
         self._font_size = 12
         self._font_color = "#ffffff"
+        # box_id -> pre-edit original text, set by the admin "Load Delivery"
+        # review flow; survives rebuild() so pagination keeps the diffs.
+        self.review_diffs: Dict[str, str] = {}
 
         outer = QVBoxLayout()
         outer.setContentsMargins(0, 0, 0, 0)
@@ -2147,6 +2188,8 @@ class TextSlotsPanel(QWidget):
             slot.text_changed.connect(self._on_text_changed)
             self.slots[box.id] = slot
             self._layout.addWidget(slot)
+            if box.id in self.review_diffs:
+                slot.set_review_diff(self.review_diffs[box.id])
 
         self._layout.addStretch()
 
@@ -2171,6 +2214,16 @@ class TextSlotsPanel(QWidget):
 
     def get_all_text(self) -> Dict[str, str]:
         return {bid: slot.get_text() for bid, slot in self.slots.items()}
+
+    def set_review_diffs(self, diffs: Dict[str, str]):
+        """Set (or clear, with {}) the review-mode text diffs and apply
+        them to the currently built slots."""
+        self.review_diffs = dict(diffs)
+        for bid, slot in self.slots.items():
+            if bid in self.review_diffs:
+                slot.set_review_diff(self.review_diffs[bid])
+            else:
+                slot.clear_review_diff()
 
 
 # ---------------------------------------------------------------------------
@@ -5365,6 +5418,9 @@ class ScriptPanel(QWidget):
 
     def set_state(self, state: dict) -> None:
         """Restore panel state from a loaded project dict."""
+        # Any project load exits review mode; the Load Delivery flow
+        # re-applies its diffs right after restoring the state.
+        self.text_slots.set_review_diffs({})
         saved_files = state.get("image_files", [])
         saved_files_rel = state.get("image_files_rel") or None
 
