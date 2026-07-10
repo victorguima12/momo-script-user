@@ -2071,6 +2071,10 @@ class TextSlotWidget(QFrame):
             self._diff_label.deleteLater()
             self._diff_label = None
 
+    def set_diff_visible(self, visible: bool):
+        if self._diff_label is not None:
+            self._diff_label.setVisible(visible)
+
 
 # ---------------------------------------------------------------------------
 # Text Slots Panel (right panel)
@@ -2122,6 +2126,20 @@ class TextSlotsPanel(QWidget):
         self.color_btn.setToolTip("Text color")
         self.color_btn.clicked.connect(self._pick_color)
         font_bar.addWidget(self.color_btn)
+
+        # Review-mode eye: toggles the red pre-edit originals under edited
+        # zones. Only visible while review diffs are loaded (Load Delivery).
+        self.review_eye_btn = QPushButton("\U0001F441 Original")
+        self.review_eye_btn.setCheckable(True)
+        self.review_eye_btn.setChecked(True)
+        self.review_eye_btn.setToolTip(
+            "Show/hide the original text (red) under the writer's edits")
+        self.review_eye_btn.setStyleSheet(
+            "QPushButton { background: #404040; color: #e57373; padding: 2px 8px; }"
+            "QPushButton:!checked { color: #777; }")
+        self.review_eye_btn.setVisible(False)
+        self.review_eye_btn.toggled.connect(self._on_review_eye_toggled)
+        font_bar.addWidget(self.review_eye_btn)
 
         font_bar.addStretch()
         outer.addLayout(font_bar)
@@ -2190,6 +2208,7 @@ class TextSlotsPanel(QWidget):
             self._layout.addWidget(slot)
             if box.id in self.review_diffs:
                 slot.set_review_diff(self.review_diffs[box.id])
+                slot.set_diff_visible(self.review_eye_btn.isChecked())
 
         self._layout.addStretch()
 
@@ -2222,8 +2241,15 @@ class TextSlotsPanel(QWidget):
         for bid, slot in self.slots.items():
             if bid in self.review_diffs:
                 slot.set_review_diff(self.review_diffs[bid])
+                slot.set_diff_visible(self.review_eye_btn.isChecked())
             else:
                 slot.clear_review_diff()
+        # The eye toggle only makes sense while reviewing a delivery.
+        self.review_eye_btn.setVisible(bool(self.review_diffs))
+
+    def _on_review_eye_toggled(self, checked: bool):
+        for slot in self.slots.values():
+            slot.set_diff_visible(checked)
 
 
 # ---------------------------------------------------------------------------
