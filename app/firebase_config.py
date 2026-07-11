@@ -8,7 +8,9 @@ repo is published publicly on GitHub.
 """
 
 FIREBASE_PROJECT_ID = "momo-imagine"
-FIREBASE_WEB_API_KEY = "AIzaSyBRsWgZrlvqW-20wm1N8tcyeJnD5K0rJSw"
+# Dedicated key for the jobs system, API-restricted to Cloud Firestore
+# only (GCP console). The Firestore rules then limit it to script_jobs.
+FIREBASE_WEB_API_KEY = "AIzaSyB3Fgk7Yjgay5Gy4MGF6bCrsJLofYKMk6I"
 
 # Firestore collection holding one doc per job; mscript payloads live in
 # the `payload` subcollection of each job doc (gzip+base64, chunked).
